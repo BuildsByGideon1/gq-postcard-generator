@@ -32,6 +32,25 @@ QR_CENTER_X_PERCENT = 84.73  # 84.73% of width
 QR_CENTER_Y_PERCENT = 78.59  # 78.59% of height
 QR_SIZE_PERCENT = 15.88      # 15.88% of width
 
+# Postcard type configurations
+POSTCARD_TYPES = {
+    '6x4': {
+        'min_width': 576,
+        'min_height': 384,
+        'aspect_ratio': 6/4
+    },
+    '9x6': {
+        'min_width': 864,
+        'min_height': 576,
+        'aspect_ratio': 9/6
+    },
+    '11x6': {
+        'min_width': 1056,
+        'min_height': 576,
+        'aspect_ratio': 11/6
+    }
+}
+
 # API Key for security
 API_KEY = os.environ.get('API_KEY', 'your-secret-api-key-change-this')
 
@@ -140,6 +159,7 @@ def generate_qr_postcard():
     Accepts:
     - image: postcard image file (multipart/form-data)
     - url: URL to encode in QR code (form field)
+    - postcard_type: Type of postcard (6x4, 9x6, or 11x6)
     - api_key: API key for authentication (form field OR X-API-Key header)
 
     Returns:
@@ -155,8 +175,12 @@ def generate_qr_postcard():
         if 'url' not in request.form:
             return jsonify({'error': 'No URL provided'}), 400
 
+        if 'postcard_type' not in request.form:
+            return jsonify({'error': 'No postcard_type provided'}), 400
+
         image_file = request.files['image']
         qr_url = request.form['url']
+        postcard_type = request.form['postcard_type']
 
         if image_file.filename == '':
             return jsonify({'error': 'No image file selected'}), 400
@@ -165,14 +189,23 @@ def generate_qr_postcard():
         if not qr_url or len(qr_url.strip()) == 0:
             return jsonify({'error': 'URL cannot be empty'}), 400
 
+        # Validate postcard type
+        if postcard_type not in POSTCARD_TYPES:
+            valid_types = list(POSTCARD_TYPES.keys())
+            return jsonify({'error': f'Invalid postcard_type. Valid types: {valid_types}'}), 400
+
         # Load and validate image
         try:
             postcard = Image.open(image_file.stream)
 
-            # Validate image dimensions (should be close to our test dimensions)
+            # Validate image dimensions based on postcard type
             width, height = postcard.size
-            if width < 1000 or height < 1000:  # Basic size check
-                return jsonify({'error': 'Image too small (minimum 1000x1000px)'}), 400
+            min_config = POSTCARD_TYPES[postcard_type]
+
+            if width < min_config['min_width'] or height < min_config['min_height']:
+                return jsonify({
+                    'error': f'Image too small for {postcard_type}. Minimum: {min_config["min_width"]}x{min_config["min_height"]}px'
+                }), 400
 
         except Exception as e:
             return jsonify({'error': f'Invalid image file: {str(e)}'}), 400
@@ -198,6 +231,7 @@ def generate_qr_postcard():
         response.headers['X-QR-Center-X'] = str(qr_config['center_x'])
         response.headers['X-QR-Center-Y'] = str(qr_config['center_y'])
         response.headers['X-Postcard-Size'] = f"{postcard.size[0]}x{postcard.size[1]}"
+        response.headers['X-Postcard-Type'] = postcard_type
 
         return response
 
@@ -224,6 +258,7 @@ def index():
                 'parameters': {
                     'image': 'Postcard image file (multipart/form-data)',
                     'url': 'URL to encode in QR code (form field)',
+                    'postcard_type': 'Type of postcard: 6x4, 9x6, or 11x6 (form field)',
                     'api_key': 'API key (form field, optional if using header)'
                 },
                 'headers': {
@@ -234,7 +269,8 @@ def index():
                     'X-QR-Size: QR code size in pixels',
                     'X-QR-Center-X: QR center X coordinate',
                     'X-QR-Center-Y: QR center Y coordinate',
-                    'X-Postcard-Size: Original postcard dimensions'
+                    'X-Postcard-Size: Original postcard dimensions',
+                    'X-Postcard-Type: Postcard type used'
                 ]
             },
             'GET /health': 'Health check and configuration',
@@ -251,6 +287,11 @@ def index():
         'security': {
             'api_key_required': True,
             'methods': ['X-API-Key header', 'api_key form field']
+        },
+        'postcard_types': {
+            '6x4': {'min_size': '576x384px', 'aspect_ratio': '1.5:1'},
+            '9x6': {'min_size': '864x576px', 'aspect_ratio': '1.5:1'},
+            '11x6': {'min_size': '1056x576px', 'aspect_ratio': '1.83:1'}
         }
     })
 
