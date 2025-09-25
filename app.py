@@ -95,8 +95,24 @@ def calculate_qr_position(postcard_width, postcard_height):
         'top_left_y': top_left_y
     }
 
-def generate_qr_code(url):
-    """Generate QR code with optimal settings"""
+def detect_background_color(postcard_image, center_x, center_y):
+    """Detect the background color at the QR center position"""
+    # Get the pixel color at the center of where QR will be placed
+    pixel_color = postcard_image.getpixel((center_x, center_y))
+
+    # Convert to RGB if it's RGBA
+    if len(pixel_color) == 4:
+        pixel_color = pixel_color[:3]
+
+    # Check if the color is black or very dark (sum of RGB < 30)
+    if sum(pixel_color) < 30:
+        return "white"  # Use white if background is black/dark
+
+    # Convert RGB tuple to hex string
+    return f"#{pixel_color[0]:02x}{pixel_color[1]:02x}{pixel_color[2]:02x}"
+
+def generate_qr_code(url, background_color="#cefe05"):
+    """Generate QR code with specified background color"""
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -106,12 +122,12 @@ def generate_qr_code(url):
     qr.add_data(url)
     qr.make(fit=True)
 
-    # Create QR with yellow-green background
-    qr_img = qr.make_image(fill_color="black", back_color="#cefe05")
+    # Create QR with detected background color
+    qr_img = qr.make_image(fill_color="black", back_color=background_color)
     return qr_img
 
 def apply_qr_to_postcard(postcard_image, qr_url):
-    """Apply QR code to postcard at calculated percentage-based position"""
+    """Apply QR code to postcard at calculated percentage-based position with matching background color"""
 
     # Get postcard dimensions
     postcard_width, postcard_height = postcard_image.size
@@ -119,14 +135,20 @@ def apply_qr_to_postcard(postcard_image, qr_url):
     # Calculate QR position and size based on percentages
     qr_config = calculate_qr_position(postcard_width, postcard_height)
 
-    # Generate QR code
-    qr_image = generate_qr_code(qr_url)
+    # Detect background color at QR center position
+    background_color = detect_background_color(postcard_image, qr_config['center_x'], qr_config['center_y'])
+
+    # Generate QR code with detected background color
+    qr_image = generate_qr_code(qr_url, background_color)
 
     # Resize QR to calculated size
     qr_resized = qr_image.resize((qr_config['size'], qr_config['size']), Image.Resampling.LANCZOS)
 
     # Apply QR to postcard at calculated position
     postcard_image.paste(qr_resized, (qr_config['top_left_x'], qr_config['top_left_y']))
+
+    # Add background color info to config for debugging
+    qr_config['background_color'] = background_color
 
     return postcard_image, qr_config
 
@@ -140,13 +162,14 @@ def health_check():
         'features': [
             'Percentage-based QR positioning',
             'API key authentication',
-            'Scalable postcard support'
+            'Scalable postcard support',
+            'Auto-matching QR background colors'
         ],
         'qr_config': {
             'center_x_percent': QR_CENTER_X_PERCENT,
             'center_y_percent': QR_CENTER_Y_PERCENT,
             'size_percent': QR_SIZE_PERCENT,
-            'background_color': '#cefe05'
+            'background_color': 'Auto-detected from postcard'
         }
     })
 
@@ -230,6 +253,7 @@ def generate_qr_postcard():
         response.headers['X-QR-Size'] = str(qr_config['size'])
         response.headers['X-QR-Center-X'] = str(qr_config['center_x'])
         response.headers['X-QR-Center-Y'] = str(qr_config['center_y'])
+        response.headers['X-QR-Background-Color'] = qr_config['background_color']
         response.headers['X-Postcard-Size'] = f"{postcard.size[0]}x{postcard.size[1]}"
         response.headers['X-Postcard-Type'] = postcard_type
 
@@ -269,6 +293,7 @@ def index():
                     'X-QR-Size: QR code size in pixels',
                     'X-QR-Center-X: QR center X coordinate',
                     'X-QR-Center-Y: QR center Y coordinate',
+                    'X-QR-Background-Color: Auto-detected QR background color',
                     'X-Postcard-Size: Original postcard dimensions',
                     'X-Postcard-Type: Postcard type used'
                 ]
@@ -281,7 +306,7 @@ def index():
             'center_x_percent': f'{QR_CENTER_X_PERCENT}%',
             'center_y_percent': f'{QR_CENTER_Y_PERCENT}%',
             'size_percent': f'{QR_SIZE_PERCENT}% of width',
-            'background_color': '#cefe05',
+            'background_color': 'Auto-detected from postcard (white if black detected)',
             'border': 'Minimal (1px)'
         },
         'security': {
