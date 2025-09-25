@@ -28,9 +28,9 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # QR Positioning Configuration (percentage-based)
-QR_CENTER_X_PERCENT = 84.73  # 84.73% of width
-QR_CENTER_Y_PERCENT = 78.59  # 78.59% of height
-QR_SIZE_PERCENT = 15.88      # 15.88% of width
+QR_CENTER_X_PERCENT = 85  # 85% of width
+QR_CENTER_Y_PERCENT = 85  # 85% of height
+QR_SIZE_PERCENT = 15      # 15% of width
 
 # Postcard type configurations
 POSTCARD_TYPES = {
