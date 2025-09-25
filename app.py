@@ -189,20 +189,24 @@ def generate_qr_postcard():
     Main webhook endpoint with API key authentication
 
     Accepts:
-    - image: postcard image file (multipart/form-data)
+    - front_image: Front postcard image file (multipart/form-data) - gets QR code processing
+    - back_image: Back postcard image file (multipart/form-data) - static, no processing
     - url: URL to encode in QR code (form field)
     - postcard_type: Type of postcard (6x4, 9x6, or 11x6)
     - api_key: API key for authentication (form field OR X-API-Key header)
 
     Returns:
-    - PDF file with QR code applied at percentage-based position
+    - 2-page PDF file with QR code on front page, back page unchanged
     - Custom headers with QR positioning info for debugging
     """
 
     try:
         # Validate request
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image file provided'}), 400
+        if 'front_image' not in request.files:
+            return jsonify({'error': 'No front_image file provided'}), 400
+
+        if 'back_image' not in request.files:
+            return jsonify({'error': 'No back_image file provided'}), 400
 
         if 'url' not in request.form:
             return jsonify({'error': 'No URL provided'}), 400
@@ -210,12 +214,16 @@ def generate_qr_postcard():
         if 'postcard_type' not in request.form:
             return jsonify({'error': 'No postcard_type provided'}), 400
 
-        image_file = request.files['image']
+        front_image_file = request.files['front_image']
+        back_image_file = request.files['back_image']
         qr_url = request.form['url']
         postcard_type = request.form['postcard_type']
 
-        if image_file.filename == '':
-            return jsonify({'error': 'No image file selected'}), 400
+        if front_image_file.filename == '':
+            return jsonify({'error': 'No front_image file selected'}), 400
+
+        if back_image_file.filename == '':
+            return jsonify({'error': 'No back_image file selected'}), 400
 
         # Validate URL
         if not qr_url or len(qr_url.strip()) == 0:
@@ -226,26 +234,41 @@ def generate_qr_postcard():
             valid_types = list(POSTCARD_TYPES.keys())
             return jsonify({'error': f'Invalid postcard_type. Valid types: {valid_types}'}), 400
 
-        # Load and validate image
+        # Load and validate front image (gets QR processing)
         try:
-            postcard = Image.open(image_file.stream)
+            front_postcard = Image.open(front_image_file.stream)
 
-            # Validate image dimensions based on postcard type
-            width, height = postcard.size
+            # Validate front image dimensions based on postcard type
+            width, height = front_postcard.size
             min_config = POSTCARD_TYPES[postcard_type]
 
             if width < min_config['min_width'] or height < min_config['min_height']:
                 return jsonify({
-                    'error': f'Image too small for {postcard_type}. Minimum: {min_config["min_width"]}x{min_config["min_height"]}px'
+                    'error': f'Front image too small for {postcard_type}. Minimum: {min_config["min_width"]}x{min_config["min_height"]}px'
                 }), 400
 
         except Exception as e:
-            return jsonify({'error': f'Invalid image file: {str(e)}'}), 400
+            return jsonify({'error': f'Invalid front_image file: {str(e)}'}), 400
 
-        # Apply QR code with percentage-based positioning
-        result_postcard, qr_config = apply_qr_to_postcard(postcard, qr_url.strip())
+        # Load and validate back image (static, no QR processing)
+        try:
+            back_postcard = Image.open(back_image_file.stream)
 
-        # Convert image to PDF with standard postcard dimensions
+            # Validate back image dimensions based on postcard type
+            back_width, back_height = back_postcard.size
+
+            if back_width < min_config['min_width'] or back_height < min_config['min_height']:
+                return jsonify({
+                    'error': f'Back image too small for {postcard_type}. Minimum: {min_config["min_width"]}x{min_config["min_height"]}px'
+                }), 400
+
+        except Exception as e:
+            return jsonify({'error': f'Invalid back_image file: {str(e)}'}), 400
+
+        # Apply QR code with percentage-based positioning to front image only
+        result_front_postcard, qr_config = apply_qr_to_postcard(front_postcard, qr_url.strip())
+
+        # Convert images to 2-page PDF with standard postcard dimensions
         pdf_buffer = io.BytesIO()
 
         # Get postcard type configuration for PDF dimensions
@@ -258,17 +281,28 @@ def generate_qr_postcard():
         # Create PDF canvas with standard postcard dimensions
         c = canvas.Canvas(pdf_buffer, pagesize=(pdf_width_points, pdf_height_points))
 
-        # Convert PIL image to ReportLab ImageReader
-        img_buffer = io.BytesIO()
-        result_postcard.save(img_buffer, format='PNG')
-        img_buffer.seek(0)
-        img_reader = ImageReader(img_buffer)
+        # PAGE 1: Front image with QR code processing
+        front_img_buffer = io.BytesIO()
+        result_front_postcard.save(front_img_buffer, format='PNG')
+        front_img_buffer.seek(0)
+        front_img_reader = ImageReader(front_img_buffer)
 
-        # Scale and fit the image to the PDF page
-        # The image will be scaled to fit the entire PDF page
-        c.drawImage(img_reader, 0, 0, width=pdf_width_points, height=pdf_height_points)
+        # Scale and fit the front image to page 1
+        c.drawImage(front_img_reader, 0, 0, width=pdf_width_points, height=pdf_height_points)
+
+        # Create page 2
+        c.showPage()
+
+        # PAGE 2: Back image (static, no QR processing)
+        back_img_buffer = io.BytesIO()
+        back_postcard.save(back_img_buffer, format='PNG')
+        back_img_buffer.seek(0)
+        back_img_reader = ImageReader(back_img_buffer)
+
+        # Scale and fit the back image to page 2
+        c.drawImage(back_img_reader, 0, 0, width=pdf_width_points, height=pdf_height_points)
+
         c.save()
-
         pdf_buffer.seek(0)
 
         # Add QR configuration to response headers for debugging
@@ -284,7 +318,8 @@ def generate_qr_postcard():
         response.headers['X-QR-Center-X'] = str(qr_config['center_x'])
         response.headers['X-QR-Center-Y'] = str(qr_config['center_y'])
         response.headers['X-QR-Background-Color'] = qr_config['background_color']
-        response.headers['X-Postcard-Size'] = f"{postcard.size[0]}x{postcard.size[1]}"
+        response.headers['X-Front-Image-Size'] = f"{front_postcard.size[0]}x{front_postcard.size[1]}"
+        response.headers['X-Back-Image-Size'] = f"{back_postcard.size[0]}x{back_postcard.size[1]}"
         response.headers['X-Postcard-Type'] = postcard_type
         response.headers['X-PDF-Dimensions'] = f"{postcard_config['pdf_width_inches']}x{postcard_config['pdf_height_inches']} inches"
 
@@ -299,20 +334,22 @@ def index():
     return jsonify({
         'service': 'QR Postcard Generator API',
         'version': '2.0.0',
-        'description': 'Scalable QR postcard generation with percentage-based positioning, outputs PDF files',
+        'description': 'Scalable 2-page QR postcard generation with percentage-based positioning, outputs PDF files',
         'features': [
             'Percentage-based QR positioning',
             'API key authentication',
             'Automatic scaling for any postcard size',
             'Optimal QR placement ratios',
-            'PDF output format'
+            '2-page PDF output format',
+            'Separate front/back image processing'
         ],
         'endpoints': {
             'POST /generate-qr-postcard': {
                 'description': 'Generate QR postcard with authentication',
                 'authentication': 'Required via X-API-Key header or api_key form field',
                 'parameters': {
-                    'image': 'Postcard image file (multipart/form-data)',
+                    'front_image': 'Front postcard image file (multipart/form-data) - gets QR processing',
+                    'back_image': 'Back postcard image file (multipart/form-data) - static content',
                     'url': 'URL to encode in QR code (form field)',
                     'postcard_type': 'Type of postcard: 6x4, 9x6, or 11x6 (form field)',
                     'api_key': 'API key (form field, optional if using header)'
@@ -320,13 +357,14 @@ def index():
                 'headers': {
                     'X-API-Key': 'API key (alternative to form field)'
                 },
-                'returns': 'PDF file with QR code applied at optimal position',
+                'returns': '2-page PDF file with QR code on front page, back page unchanged',
                 'response_headers': [
                     'X-QR-Size: QR code size in pixels',
                     'X-QR-Center-X: QR center X coordinate',
                     'X-QR-Center-Y: QR center Y coordinate',
                     'X-QR-Background-Color: Auto-detected QR background color',
-                    'X-Postcard-Size: Original postcard dimensions',
+                    'X-Front-Image-Size: Front image dimensions',
+                    'X-Back-Image-Size: Back image dimensions',
                     'X-Postcard-Type: Postcard type used',
                     'X-PDF-Dimensions: PDF output dimensions in inches'
                 ]
