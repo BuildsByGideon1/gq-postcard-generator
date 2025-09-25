@@ -23,6 +23,9 @@ import tempfile
 import os
 from werkzeug.utils import secure_filename
 from functools import wraps
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import ImageReader
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
@@ -186,7 +189,7 @@ def generate_qr_postcard():
     - api_key: API key for authentication (form field OR X-API-Key header)
 
     Returns:
-    - Postcard image with QR code applied at percentage-based position
+    - PDF file with QR code applied at percentage-based position
     - Custom headers with QR positioning info for debugging
     """
 
@@ -236,17 +239,38 @@ def generate_qr_postcard():
         # Apply QR code with percentage-based positioning
         result_postcard, qr_config = apply_qr_to_postcard(postcard, qr_url.strip())
 
-        # Save to memory buffer
+        # Convert image to PDF
+        pdf_buffer = io.BytesIO()
+
+        # Get image dimensions
+        img_width, img_height = result_postcard.size
+
+        # Create PDF with image dimensions (in points)
+        # Convert pixels to points (1 inch = 72 points, assume 72 DPI)
+        pdf_width = img_width
+        pdf_height = img_height
+
+        # Create PDF canvas
+        c = canvas.Canvas(pdf_buffer, pagesize=(pdf_width, pdf_height))
+
+        # Convert PIL image to ReportLab ImageReader
         img_buffer = io.BytesIO()
-        result_postcard.save(img_buffer, format='PNG', optimize=True)
+        result_postcard.save(img_buffer, format='PNG')
         img_buffer.seek(0)
+        img_reader = ImageReader(img_buffer)
+
+        # Draw image on PDF (full page)
+        c.drawImage(img_reader, 0, 0, width=pdf_width, height=pdf_height)
+        c.save()
+
+        pdf_buffer.seek(0)
 
         # Add QR configuration to response headers for debugging
         response = send_file(
-            img_buffer,
-            mimetype='image/png',
+            pdf_buffer,
+            mimetype='application/pdf',
             as_attachment=True,
-            download_name='qr_postcard.png'
+            download_name='qr_postcard.pdf'
         )
 
         # Add custom headers with QR positioning info
@@ -268,12 +292,13 @@ def index():
     return jsonify({
         'service': 'QR Postcard Generator API',
         'version': '2.0.0',
-        'description': 'Scalable QR postcard generation with percentage-based positioning',
+        'description': 'Scalable QR postcard generation with percentage-based positioning, outputs PDF files',
         'features': [
             'Percentage-based QR positioning',
             'API key authentication',
             'Automatic scaling for any postcard size',
-            'Optimal QR placement ratios'
+            'Optimal QR placement ratios',
+            'PDF output format'
         ],
         'endpoints': {
             'POST /generate-qr-postcard': {
@@ -288,7 +313,7 @@ def index():
                 'headers': {
                     'X-API-Key': 'API key (alternative to form field)'
                 },
-                'returns': 'PNG image with QR code applied at optimal position',
+                'returns': 'PDF file with QR code applied at optimal position',
                 'response_headers': [
                     'X-QR-Size: QR code size in pixels',
                     'X-QR-Center-X: QR center X coordinate',
