@@ -40,17 +40,23 @@ POSTCARD_TYPES = {
     '6x4': {
         'min_width': 576,
         'min_height': 384,
-        'aspect_ratio': 6/4
+        'aspect_ratio': 6/4,
+        'pdf_width_inches': 6.25,
+        'pdf_height_inches': 4.25
     },
     '9x6': {
         'min_width': 864,
         'min_height': 576,
-        'aspect_ratio': 9/6
+        'aspect_ratio': 9/6,
+        'pdf_width_inches': 9.25,
+        'pdf_height_inches': 6.25
     },
     '11x6': {
         'min_width': 1056,
         'min_height': 576,
-        'aspect_ratio': 11/6
+        'aspect_ratio': 11/6,
+        'pdf_width_inches': 11.25,
+        'pdf_height_inches': 6.25
     }
 }
 
@@ -239,19 +245,18 @@ def generate_qr_postcard():
         # Apply QR code with percentage-based positioning
         result_postcard, qr_config = apply_qr_to_postcard(postcard, qr_url.strip())
 
-        # Convert image to PDF
+        # Convert image to PDF with standard postcard dimensions
         pdf_buffer = io.BytesIO()
 
-        # Get image dimensions
-        img_width, img_height = result_postcard.size
+        # Get postcard type configuration for PDF dimensions
+        postcard_config = POSTCARD_TYPES[postcard_type]
 
-        # Create PDF with image dimensions (in points)
-        # Convert pixels to points (1 inch = 72 points, assume 72 DPI)
-        pdf_width = img_width
-        pdf_height = img_height
+        # Convert inches to points (1 inch = 72 points)
+        pdf_width_points = postcard_config['pdf_width_inches'] * 72
+        pdf_height_points = postcard_config['pdf_height_inches'] * 72
 
-        # Create PDF canvas
-        c = canvas.Canvas(pdf_buffer, pagesize=(pdf_width, pdf_height))
+        # Create PDF canvas with standard postcard dimensions
+        c = canvas.Canvas(pdf_buffer, pagesize=(pdf_width_points, pdf_height_points))
 
         # Convert PIL image to ReportLab ImageReader
         img_buffer = io.BytesIO()
@@ -259,8 +264,9 @@ def generate_qr_postcard():
         img_buffer.seek(0)
         img_reader = ImageReader(img_buffer)
 
-        # Draw image on PDF (full page)
-        c.drawImage(img_reader, 0, 0, width=pdf_width, height=pdf_height)
+        # Scale and fit the image to the PDF page
+        # The image will be scaled to fit the entire PDF page
+        c.drawImage(img_reader, 0, 0, width=pdf_width_points, height=pdf_height_points)
         c.save()
 
         pdf_buffer.seek(0)
@@ -280,6 +286,7 @@ def generate_qr_postcard():
         response.headers['X-QR-Background-Color'] = qr_config['background_color']
         response.headers['X-Postcard-Size'] = f"{postcard.size[0]}x{postcard.size[1]}"
         response.headers['X-Postcard-Type'] = postcard_type
+        response.headers['X-PDF-Dimensions'] = f"{postcard_config['pdf_width_inches']}x{postcard_config['pdf_height_inches']} inches"
 
         return response
 
@@ -320,7 +327,8 @@ def index():
                     'X-QR-Center-Y: QR center Y coordinate',
                     'X-QR-Background-Color: Auto-detected QR background color',
                     'X-Postcard-Size: Original postcard dimensions',
-                    'X-Postcard-Type: Postcard type used'
+                    'X-Postcard-Type: Postcard type used',
+                    'X-PDF-Dimensions: PDF output dimensions in inches'
                 ]
             },
             'GET /health': 'Health check and configuration',
@@ -339,9 +347,9 @@ def index():
             'methods': ['X-API-Key header', 'api_key form field']
         },
         'postcard_types': {
-            '6x4': {'min_size': '576x384px', 'aspect_ratio': '1.5:1'},
-            '9x6': {'min_size': '864x576px', 'aspect_ratio': '1.5:1'},
-            '11x6': {'min_size': '1056x576px', 'aspect_ratio': '1.83:1'}
+            '6x4': {'min_size': '576x384px', 'aspect_ratio': '1.5:1', 'pdf_size': '6.25"x4.25"'},
+            '9x6': {'min_size': '864x576px', 'aspect_ratio': '1.5:1', 'pdf_size': '9.25"x6.25"'},
+            '11x6': {'min_size': '1056x576px', 'aspect_ratio': '1.83:1', 'pdf_size': '11.25"x6.25"'}
         }
     })
 
